@@ -8,26 +8,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // ── TTS: speak a string ───────────────────
   if (message.type === 'TTS_SPEAK') {
-    // Stop anything currently speaking first
+
     chrome.tts.stop();
 
     chrome.tts.speak(message.text, {
-      rate:   message.rate || 1.0,
+      rate: message.rate || 1.0,
       volume: 1.0,
-      // 'en-US' is universally available; avoids silent failure
-      // from missing en-IN voice on some systems
-      lang:   'en-US',
+      lang: 'en-US',
       onEvent: (event) => {
         if (event.type === 'end' || event.type === 'error' || event.type === 'cancelled') {
-          // Send response back to content script so onDone callback fires
           try { sendResponse({ done: true, event: event.type }); } catch (_) {}
         }
       }
     });
 
-    // Return true to keep message channel open for async sendResponse
     return true;
   }
+
+
+  // ── PDF DOWNLOAD ───────────────────────────
+  if (message.type === 'DOWNLOAD_PDF') {
+
+    console.log('VoxPath: DOWNLOAD_PDF received');
+
+    chrome.downloads.download({
+      url: message.dataUrl,
+      filename: 'voxpath-report-' + Date.now() + '.pdf',
+      saveAs: false
+    }, (downloadId) => {
+
+      if (chrome.runtime.lastError) {
+        console.error('Download failed:', chrome.runtime.lastError);
+        sendResponse({ ok: false });
+      } else {
+        console.log('Download started:', downloadId);
+        sendResponse({ ok: true });
+      }
+
+    });
+
+    return true;
+  }
+
 
   // ── TTS: stop immediately ─────────────────
   if (message.type === 'TTS_STOP') {
@@ -36,17 +58,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+
   // ── Relay log/status from content → popup ─
   if (message.type === 'LOG_UPDATE' || message.type === 'SESSION_STATUS') {
-    chrome.runtime.sendMessage(message).catch(() => {
-      // Popup closed — ignore
-    });
+    chrome.runtime.sendMessage(message).catch(() => {});
     sendResponse({ ok: true });
     return false;
   }
 
   sendResponse({ ok: true });
-  return false;
 });
 
 // ── Default settings on install ──────────────

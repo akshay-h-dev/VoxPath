@@ -21,7 +21,8 @@
     "activeTab",
     "scripting",
     "storage",
-    "tts"
+    "tts",
+    "downloads"
   ],
   "icons": {
     "16": "icons/icon16.png",

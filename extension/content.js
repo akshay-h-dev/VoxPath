@@ -25,8 +25,34 @@
   loadSettings();
 
   function loadSettings() {
-    chrome.storage.local.get('voxpathSettings', (result) => {
+    chrome.storage.local.get(['voxpathSettings', 'voxpathPendingReport'], (result) => {
       settings = result.voxpathSettings || {};
+
+      // ── Check if a report was saved before a form submit reload ──
+      const pending = result.voxpathPendingReport;
+      if (pending && pending.savedAt) {
+        const ageMs = Date.now() - pending.savedAt;
+        // Only act if saved within the last 5 minutes (avoids stale reports)
+        if (ageMs < 5 * 60 * 1000) {
+          logToPopup('📄 Pending report detected — generating…', 'score');
+          // Clear it immediately so it doesn't re-trigger on next load
+          chrome.storage.local.remove('voxpathPendingReport', () => {
+            // Restore state from storage so generateReport works
+            questions      = pending.questions      || [];
+            sessionAnswers = pending.answers        || [];
+            // Small delay so the page fully renders before PDF download
+            setTimeout(() => {
+              speak('Form submitted. Generating your interview report.');
+              generateReportFromData(pending);
+            }, 1500);
+          });
+          return;   // skip initVoiceCommandListener on post-submit pages
+        } else {
+          // Stale — clean up
+          chrome.storage.local.remove('voxpathPendingReport');
+        }
+      }
+
       initVoiceCommandListener();
     });
   }
@@ -164,23 +190,39 @@ Return ONLY valid JSON — no explanation:
   function executeCommand(command) {
     logToPopup('🤖 AI command: ' + command, 'score');
     switch (command) {
-      case 'NEXT':        speak('Moving to next question.', nextQuestion);   break;
-      case 'SKIP':        speak('Skipping question.',       skipQuestion);   break;
-      case 'BACK':        speak('Going back.',              prevQuestion);   break;
-      case 'REPEAT':                                        repeatQuestion();break;
-      case 'WHERE':                                         announcePosition();break;
+      case 'NEXT':        speak('Moving to next question.', nextQuestion);      break;
+      case 'SKIP':        speak('Skipping question.',       skipQuestion);      break;
+      case 'BACK':        speak('Going back.',              prevQuestion);      break;
+      case 'REPEAT':                                        repeatQuestion();   break;
+      case 'WHERE':                                         announcePosition(); break;
       case 'RESTART':     speak('Restarting from question 1.', restartSession); break;
-      case 'SUBMIT':                                        stopAnswerCapture(); break;
-      case 'READ_ANSWER':                                   readBackLastAnswer();break;
-      case 'START':                                         startSession();  break;
-      case 'END':         speak('Exiting interview.',        endSession);     break;
-      case 'PAUSE':                                         pauseSession();  break;
-      case 'RESUME':                                        resumeSession(); break;
-      case 'SUMMARY':                                       speakSummary();  break;
-      case 'TIME':                                          announceTimeLeft();break;
-      case 'SLOWER':                                        adjustSpeed(-0.2);break;
-      case 'FASTER':                                        adjustSpeed(+0.2);break;
-      case 'HELP':                                          speakHelp();     break;
+      case 'SUBMIT': {
+        const btn = findSubmitButton();
+        if (btn) {
+          confirmThen(
+            'Submit button found. Do you want to submit the form now?',
+            () => submitAndFinish(),
+            () => speak('Submit cancelled. Continue your answer.')
+          );
+        } else {
+          confirmThen(
+            'No submit button found. End interview and generate report?',
+            () => { stopAnswerCapture(); endSessionSilent(); },
+            () => speak('Cancelled. Continue your answer.')
+          );
+        }
+        break;
+      }
+      case 'READ_ANSWER':                                   readBackLastAnswer(); break;
+      case 'START':                                         startSession();       break;
+      case 'END':                                           endSession();         break;
+      case 'PAUSE':                                         pauseSession();       break;
+      case 'RESUME':                                        resumeSession();      break;
+      case 'SUMMARY':                                       speakSummary();       break;
+      case 'TIME':                                          announceTimeLeft();   break;
+      case 'SLOWER':                                        adjustSpeed(-0.2);    break;
+      case 'FASTER':                                        adjustSpeed(+0.2);    break;
+      case 'HELP':                                          speakHelp();          break;
     }
   }
 
@@ -209,11 +251,11 @@ Return ONLY valid JSON — no explanation:
     };
 
     recognitionCmd.onerror = (e) => {
-      if (e.error !== 'no-speech' && !isListeningAns) restartCmdListener();
+      if (e.error !== 'no-speech' && !isListeningAns && !awaitingConfirm) restartCmdListener();
     };
 
     recognitionCmd.onend = () => {
-      if (!isListeningAns) restartCmdListener();
+      if (!isListeningAns && !awaitingConfirm) restartCmdListener();
     };
 
     try {
@@ -225,7 +267,7 @@ Return ONLY valid JSON — no explanation:
 
   function restartCmdListener() {
     setTimeout(() => {
-      if (!isListeningAns) {
+      if (!isListeningAns && !awaitingConfirm) {
         try { recognitionCmd.start(); } catch (_) {}
       }
     }, 600);
@@ -238,10 +280,26 @@ Return ONLY valid JSON — no explanation:
     else if (t.includes('skip question') || t.includes('skip'))            { skipQuestion();        }
     else if (t.includes('repeat question') || t.includes('repeat'))        { repeatQuestion();      }
     else if (t.includes('go back') || t.includes('previous'))              { prevQuestion();        }
-    else if (t.includes('submit answer') || t.includes('submit'))          { stopAnswerCapture();   }
     else if (t.includes('read answer') || t.includes('what did i say'))    { readBackLastAnswer();  }
     else if (t.includes('exit interview') || t.includes('quit interview') ||
              t.includes('exit session')   || t.includes('quit session'))   { endSession();          }
+    else if (t.includes('submit answer') || t.includes('submit interview') || t === 'submit') {
+      const btn = findSubmitButton();
+      if (btn) {
+        confirmThen(
+          'Submit button found. Do you want to submit the form now?',
+          () => submitAndFinish(),
+          () => speak('Submit cancelled.')
+        );
+      } else {
+        // No submit button — just save the answer and end session
+        confirmThen(
+          'No submit button found. Do you want to end the interview and generate your report?',
+          () => { stopAnswerCapture(); endSessionSilent(); },
+          () => speak('Cancelled. Continue your answer.')
+        );
+      }
+    }
     else if (t.includes('pause'))                                           { pauseSession();        }
     else if (t.includes('resume') || t.includes('continue'))               { resumeSession();       }
     else if (t.includes('summary') || t.includes('how am i doing'))        { speakSummary();        }
@@ -271,17 +329,107 @@ Return ONLY valid JSON — no explanation:
       return;
     }
 
-    speak('Session started. ' + questions.length + ' questions found. Reading question 1.');
-    setTimeout(() => readCurrentQuestion(), 1800);
+    // ── Read page instructions first if present ──
+    const instructions = extractPageInstructions();
+    if (instructions) {
+      logToPopup('📋 Instructions found — reading aloud.', 'default');
+      speak(
+        'Instructions: ' + instructions +
+        ' Session started. ' + questions.length + ' questions found. Reading question 1.',
+        () => setTimeout(() => readCurrentQuestion(), 800)
+      );
+    } else {
+      speak('Session started. ' + questions.length + ' questions found. Reading question 1.');
+      setTimeout(() => readCurrentQuestion(), 1800);
+    }
   }
 
   function endSession() {
-    sessionActive = false;
+    const btn = findSubmitButton();
+
+    const doEnd = () => {
+      sessionActive = false;
+      stopAnswerCapture();
+      chrome.runtime.sendMessage({ type: 'SESSION_STATUS', active: false });
+      logToPopup('Session ended. Generating report…', 'default');
+      if (btn) {
+        // Save to storage FIRST — page will reload after click
+        saveReportDataThenClick(btn);
+      } else {
+        speak('Interview exited. Generating your report.', () => generateReport());
+      }
+    };
+
+    if (btn) {
+      confirmThen(
+        'You are about to exit and submit the form.',
+        doEnd,
+        () => { speak('Exit cancelled. You can continue your interview.'); }
+      );
+    } else {
+      confirmThen(
+        'You are about to exit the interview.',
+        doEnd,
+        () => { speak('Exit cancelled. You can continue your interview.'); }
+      );
+    }
+  }
+
+  // ── Submit form + generate report (called by SUBMIT command) ──
+  function submitAndFinish() {
     stopAnswerCapture();
+    sessionActive = false;
     chrome.runtime.sendMessage({ type: 'SESSION_STATUS', active: false });
-    speak('Interview ended. Generating your report.');
+
+    const btn = findSubmitButton();
+    if (btn) {
+      saveReportDataThenClick(btn);
+    } else {
+      speak('Generating your report.', () => generateReport());
+    }
+    logToPopup('Generating report…', 'default');
+  }
+
+  // ── End session without confirmation prompt (called after confirm) ──
+  function endSessionSilent() {
+    sessionActive = false;
+    chrome.runtime.sendMessage({ type: 'SESSION_STATUS', active: false });
     logToPopup('Session ended. Generating report…', 'default');
-    setTimeout(() => generateReport(), 1000);
+    speak('Interview ended. Generating your report.', () => generateReport());
+  }
+
+  // ─────────────────────────────────────────────
+  //  Save all report data to chrome.storage.local
+  //  THEN click the submit button.
+  //  The page will reload — on the new page,
+  //  loadSettings() detects the pending report
+  //  and triggers generateReport() from storage.
+  // ─────────────────────────────────────────────
+  async function saveReportDataThenClick(btn) {
+    // Wait for last answer to finish scoring before saving
+    if (processingPromise) {
+      logToPopup('⏳ Waiting for answer scoring…', 'default');
+      speak('Please wait, saving your answers.');
+      try { await processingPromise; } catch (_) {}
+    }
+
+    logToPopup('💾 Saving report data to storage…', 'default');
+
+    const reportData = {
+      candidateName: settings.candidateName || 'Anonymous',
+      questions,
+      answers:   sessionAnswers,
+      biasFlags: [],   // bias audit runs after reload to avoid blocking
+      savedAt:   Date.now(),
+    };
+
+    chrome.storage.local.set({ voxpathPendingReport: reportData }, () => {
+      logToPopup('💾 Saved. Clicking submit…', 'default');
+      speak('Answers saved. Submitting form.', () => {
+        btn.focus();
+        btn.click();   // page reloads here — content script will die
+      });
+    });
   }
 
   function nextQuestion() {
@@ -575,9 +723,13 @@ Return ONLY valid JSON — no explanation:
   });
 }
 
-  function stopAnswerCapture() {
+  function stopAnswerCapture(andSubmit = false) {
     clearTimeout(answerTimer);
     try { recognitionAns?.stop(); } catch (_) {}
+    if (andSubmit) {
+      const submitted = clickSubmitButton();
+      if (submitted) logToPopup('✓ Submit button clicked.', 'score');
+    }
   }
 
   // ════════════════════════════════════════════
@@ -699,46 +851,299 @@ Return ONLY valid JSON — no explanation:
   }
 
   // ════════════════════════════════════════════
+  //  PAGE INSTRUCTIONS EXTRACTOR
+  //  Reads any instruction/description text
+  //  that appears before the first question
+  // ════════════════════════════════════════════
+  function extractPageInstructions() {
+    const candidates = [];
+
+    // Google Forms — description text uses class freebirdFormviewerViewHeaderDescription
+    // or role="note" inside the form header
+    document.querySelectorAll([
+      '[class*="freebirdFormviewerViewHeaderDescription"]',
+      '[class*="sketchyformDescription"]',
+      '[role="note"]',
+      '[class*="description"]',
+      '[class*="instructions"]',
+      '[class*="intro"]',
+      '[class*="direction"]',
+    ].join(',')).forEach(el => {
+      const text = el.textContent.trim();
+      // Must be substantial and not a question itself
+      if (text.length > 20 && text.length < 1000 && !isQuestionText(text)) {
+        candidates.push(text);
+      }
+    });
+
+    // Fallback — first <p> on the page if it looks instructional
+    if (candidates.length === 0) {
+      const paras = document.querySelectorAll('p');
+      for (const p of paras) {
+        const text = p.textContent.trim();
+        if (
+          text.length > 40 && text.length < 800 &&
+          !isQuestionText(text) &&
+          /please|instruction|note|read|answer|complete|fill|this (form|test|interview)/i.test(text)
+        ) {
+          candidates.push(text);
+          break;
+        }
+      }
+    }
+
+    // Return first match, capped at 400 chars so TTS doesn't read forever
+    if (candidates.length === 0) return null;
+    const raw = candidates[0];
+    return raw.length > 400 ? raw.substring(0, 397) + '...' : raw;
+  }
+
+  // ════════════════════════════════════════════
+  //  SUBMIT BUTTON FINDER & CLICKER
+  // ════════════════════════════════════════════
+  function findSubmitButton() {
+    // Priority-ordered selectors — most specific first
+    const selectors = [
+      // Google Forms submit
+      '[jsname="M2UYVd"]',
+      '[data-id="submit-form"]',
+      // Generic submit inputs
+      'input[type="submit"]',
+      // Buttons with submit-like text
+      'button[type="submit"]',
+      // Any visible button whose text matches submit keywords
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && isVisible(el)) return el;
+    }
+
+    // Last resort — scan all buttons for submit-like text
+    const submitKeywords = /^(submit|finish|done|send|complete|next\s*step|confirm)$/i;
+    const allBtns = [
+      ...document.querySelectorAll('button'),
+      ...document.querySelectorAll('[role="button"]'),
+    ];
+    for (const btn of allBtns) {
+      const text = btn.textContent.trim();
+      if (submitKeywords.test(text) && isVisible(btn)) return btn;
+    }
+
+    return null;
+  }
+
+  function isVisible(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 &&
+           getComputedStyle(el).visibility !== 'hidden' &&
+           getComputedStyle(el).display !== 'none';
+  }
+
+  function clickSubmitButton() {
+    const btn = findSubmitButton();
+    if (!btn) return false;
+    btn.focus();
+    btn.click();
+    return true;
+  }
+
+  // ════════════════════════════════════════════
+  //  CONFIRMATION HELPER
+  //  Asks a yes/no question via voice then
+  //  calls onConfirm() or onCancel()
+  // ════════════════════════════════════════════
+  let awaitingConfirm = false;
+
+  function confirmThen(question, onConfirm, onCancel) {
+    if (awaitingConfirm) return;
+    awaitingConfirm = true;
+
+    // Hard-stop everything that could fight the confirm listener
+    try { recognitionCmd.abort(); } catch (_) {}
+    stopAnswerCapture();
+
+    // Speak the confirmation prompt via background TTS
+    speak(question + ' Say yes to confirm, or no to cancel.', () => {
+
+      // ── Audio pipeline settle delay ───────────────────────────────
+      // chrome.tts fires onDone but the OS audio device is still
+      // in "output" mode for ~400ms. Starting STT immediately causes
+      // Chrome to silently kill the listener. Wait for the device to
+      // switch back to input before opening the mic.
+      setTimeout(() => startConfirmListener(), 500);
+
+    });
+
+    function startConfirmListener() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        awaitingConfirm = false;
+        onConfirm();
+        return;
+      }
+
+      logToPopup('🎤 Listening for yes or no…', 'default');
+
+      const listener = new SR();
+      listener.lang            = settings.sttLang || 'en-IN';
+      listener.continuous      = true;    // keep listening — don't auto-close
+      listener.interimResults  = false;
+      listener.maxAlternatives = 5;
+
+      let gotAnswer  = false;
+      let retries    = 0;
+      const MAX_RETRY = 2;
+
+      // Hard timeout — 10 seconds total from when we start listening
+      const timeout = setTimeout(() => {
+        if (gotAnswer) return;
+        gotAnswer = true;
+        try { listener.abort(); } catch (_) {}
+        awaitingConfirm = false;
+        logToPopup('Confirmation timed out.', 'warn');
+        speak('No response — action cancelled.', () => {
+          if (onCancel) onCancel();
+          restartCmdListener();
+        });
+      }, 10000);
+
+      function finish(confirmed) {
+        if (gotAnswer) return;
+        gotAnswer = true;
+        clearTimeout(timeout);
+        try { listener.abort(); } catch (_) {}
+        awaitingConfirm = false;
+
+        if (confirmed) {
+          logToPopup('✓ Confirmed.', 'score');
+          speak('Confirmed.', () => { onConfirm(); restartCmdListener(); });
+        } else {
+          logToPopup('Confirmation cancelled.', 'warn');
+          speak('Cancelled.', () => { if (onCancel) onCancel(); restartCmdListener(); });
+        }
+      }
+
+      listener.onresult = (event) => {
+        const heard = Array.from(event.results)
+          .slice(event.resultIndex)
+          .flatMap(r => Array.from(r))
+          .map(alt => alt.transcript.toLowerCase().trim())
+          .join(' ');
+
+        logToPopup('Heard: "' + heard + '"', 'default');
+
+        const isYes = /\byes\b|\byeah\b|\byep\b|\bconfirm\b|\bdo it\b|\bsure\b|\bokay\b|\bok\b|\bgo ahead\b|\bproceed\b/.test(heard);
+        const isNo  = /\bno\b|\bnope\b|\bcancel\b|\bstop\b|\bdon't\b|\bdo not\b/.test(heard);
+
+        if (isYes) finish(true);
+        else if (isNo) finish(false);
+        // if neither matched, keep listening — user may still be speaking
+      };
+
+      listener.onerror = (e) => {
+        if (gotAnswer) return;
+
+        // no-speech = mic open but silence — just keep waiting, timeout will handle it
+        if (e.error === 'no-speech') return;
+
+        // audio-capture / not-allowed = mic unavailable
+        if (e.error === 'audio-capture' || e.error === 'not-allowed') {
+          logToPopup('⚠ Mic unavailable: ' + e.error, 'warn');
+          finish(false);
+          return;
+        }
+
+        // Other errors — retry up to MAX_RETRY times
+        if (retries < MAX_RETRY) {
+          retries++;
+          logToPopup('⚠ STT error (' + e.error + ') — retrying ' + retries + '/' + MAX_RETRY, 'warn');
+          setTimeout(() => {
+            if (!gotAnswer) {
+              try { listener.start(); } catch (_) { finish(false); }
+            }
+          }, 400);
+        } else {
+          finish(false);
+        }
+      };
+
+      listener.onend = () => {
+        if (gotAnswer) return;
+        // Listener closed without a result — restart it (Chrome auto-closes continuous listeners on silence)
+        if (retries < MAX_RETRY) {
+          retries++;
+          setTimeout(() => {
+            if (!gotAnswer) {
+              try { listener.start(); } catch (_) { finish(false); }
+            }
+          }, 300);
+        }
+        // If max retries hit, let the timeout handle it
+      };
+
+      try {
+        listener.start();
+      } catch (e) {
+        awaitingConfirm = false;
+        clearTimeout(timeout);
+        logToPopup('⚠ Could not start confirm listener: ' + e.message, 'warn');
+        speak('Microphone unavailable — action cancelled.', () => {
+          if (onCancel) onCancel();
+          restartCmdListener();
+        });
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════
   //  ANSWER PROCESSING — Filler + AI scoring
   // ════════════════════════════════════════════
+  let processingPromise = null;   // track in-flight processAnswer so generateReport can wait
+
   async function processAnswer(transcript) {
-    if (!transcript || transcript.length < 3) {
-      speak('No answer detected.');
-      return;
-    }
-
-    const question = questions[currentQIndex] || '';
-
-    let fillerFeedback = '';
-    if (settings.fillerDetect !== false) {
-      const result = detectFillers(transcript);
-      fillerFeedback = result.feedback;
-      if (result.count > 0) {
-        logToPopup('⚠ ' + result.count + ' filler word(s): ' + result.found.join(', '), 'warn');
+    const run = async () => {
+      if (!transcript || transcript.length < 3) {
+        speak('No answer detected.');
+        return;
       }
-    }
 
-    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
-    let paceFeedback = '';
-    if (wordCount < 10)  paceFeedback = 'Answer was very short.';
-    if (wordCount > 250) paceFeedback = 'Answer was very long — try to be more concise.';
+      const question = questions[currentQIndex] || '';
 
-    let aiFeedback = '';
-    if (settings.apiKey) {
-      try {
-        aiFeedback = await scoreWithGroq(question, transcript);
-        logToPopup(aiFeedback, 'score');
-      } catch (e) {
-        logToPopup('AI scoring failed: ' + e.message, 'warn');
+      let fillerFeedback = '';
+      if (settings.fillerDetect !== false) {
+        const result = detectFillers(transcript);
+        fillerFeedback = result.feedback;
+        if (result.count > 0) {
+          logToPopup('⚠ ' + result.count + ' filler word(s): ' + result.found.join(', '), 'warn');
+        }
       }
-    } else {
-      logToPopup('No Groq API key — AI scoring skipped.', 'warn');
-    }
 
-    sessionAnswers.push({ question, transcript, fillerFeedback, paceFeedback, aiFeedback });
+      const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+      let paceFeedback = '';
+      if (wordCount < 10)  paceFeedback = 'Answer was very short.';
+      if (wordCount > 250) paceFeedback = 'Answer was very long — try to be more concise.';
 
-    const combined = [aiFeedback, fillerFeedback, paceFeedback].filter(Boolean).join('. ');
-    if (settings.voiceFeedback !== false && combined) speak(combined);
+      let aiFeedback = '';
+      if (settings.apiKey) {
+        try {
+          aiFeedback = await scoreWithGroq(question, transcript);
+          logToPopup(aiFeedback, 'score');
+        } catch (e) {
+          logToPopup('AI scoring failed: ' + e.message, 'warn');
+        }
+      } else {
+        logToPopup('No Groq API key — AI scoring skipped.', 'warn');
+      }
+
+      sessionAnswers.push({ question, transcript, fillerFeedback, paceFeedback, aiFeedback });
+
+      const combined = [aiFeedback, fillerFeedback, paceFeedback].filter(Boolean).join('. ');
+      if (settings.voiceFeedback !== false && combined) speak(combined);
+    };
+
+    processingPromise = run().finally(() => { processingPromise = null; });
+    return processingPromise;
   }
 
   function detectFillers(text) {
@@ -798,57 +1203,68 @@ Return ONLY valid JSON: {"relevance":4,"completeness":3,"clarity":4,"tip":"Your 
   //  REPORT
   // ════════════════════════════════════════════
   async function generateReport() {
+    logToPopup('📄 generateReport called.', 'default');
+
+    // ── Wait for the last answer to finish scoring ──
+    if (processingPromise) {
+      logToPopup('⏳ Waiting for answer scoring to complete…', 'default');
+      try { await processingPromise; } catch (_) {}
+    }
+
+    logToPopup('📄 sessionAnswers.length = ' + sessionAnswers.length, 'default');
+
     if (sessionAnswers.length === 0) {
       speak('No answers recorded. Cannot generate report.');
+      logToPopup('⚠ No answers — report aborted.', 'warn');
       return;
     }
 
+    logToPopup('📄 Running bias audit…', 'default');
     let biasFlags = [];
     if (settings.biasAudit !== false && settings.apiKey) {
       try { biasFlags = await auditBiasWithGroq(questions); } catch (_) {}
     }
 
-    const lines = [
-      '═══════════════════════════════════',
-      '        VOXPATH — INTERVIEW REPORT',
-      '═══════════════════════════════════',
-      'Candidate : ' + (settings.candidateName || 'Unknown'),
-      'Date      : ' + new Date().toLocaleDateString('en-IN'),
-      'Questions : ' + sessionAnswers.length,
-      '',
-      '─── ANSWERS & SCORES ───',
-    ];
+    logToPopup('📄 Building report data…', 'default');
 
-    sessionAnswers.forEach((a, i) => {
-      lines.push('');
-      lines.push('Q' + (i + 1) + ': ' + a.question);
-      lines.push('Answer  : ' + a.transcript.substring(0, 120) + (a.transcript.length > 120 ? '…' : ''));
-      lines.push('Score   : ' + (a.aiFeedback    || 'N/A (no API key)'));
-      lines.push('Fillers : ' + (a.fillerFeedback || 'None detected'));
-    });
+    speak('Report generated. ' + sessionAnswers.length + ' answers evaluated.' +
+      (biasFlags.length > 0 ? ' ' + biasFlags.length + ' biased questions flagged.' : ''));
 
-    if (biasFlags.length > 0) {
-      lines.push('');
-      lines.push('─── BIAS AUDIT ───');
-      biasFlags.forEach(f => lines.push('⚠ ' + f));
-    }
-
-    lines.push('');
-    lines.push('═══════════════════════════════════');
-    lines.push('Generated by VoxPath v1.2');
-
-    const report = lines.join('\n');
     logToPopup('Report ready — ' + sessionAnswers.length + ' answers, ' + biasFlags.length + ' bias flag(s).', 'score');
-    speak('Report generated. ' + sessionAnswers.length + ' answers evaluated.' + (biasFlags.length > 0 ? ' ' + biasFlags.length + ' biased questions flagged.' : ''));
 
-    if (settings.autoPdf !== false) {
-      downloadReport({
-        candidateName: settings.candidateName || 'Anonymous',
-        questions,
-        answers:   sessionAnswers,
-        biasFlags,
-      });
+    logToPopup('📄 Calling downloadReport…', 'default');
+    downloadReport({
+      candidateName: settings.candidateName || 'Anonymous',
+      questions,
+      answers:   sessionAnswers,
+      biasFlags,
+    });
+  }
+
+  // ── Called on post-submit page from storage data ──────────────
+  async function generateReportFromData(data) {
+    logToPopup('📄 generateReportFromData — ' + (data.answers || []).length + ' answers.', 'default');
+
+    if (!data.answers || data.answers.length === 0) {
+      speak('No answers were recorded.');
+      logToPopup('⚠ Pending report had no answers.', 'warn');
+      return;
     }
+
+    let biasFlags = data.biasFlags || [];
+    if (settings.biasAudit !== false && settings.apiKey && biasFlags.length === 0) {
+      try { biasFlags = await auditBiasWithGroq(data.questions || []); } catch (_) {}
+    }
+
+    speak('Interview report ready. ' + data.answers.length + ' answers evaluated.');
+    logToPopup('✅ Report ready. Downloading PDF…', 'score');
+
+    downloadReport({
+      candidateName: data.candidateName || 'Anonymous',
+      questions:     data.questions     || [],
+      answers:       data.answers,
+      biasFlags,
+    });
   }
 
   async function auditBiasWithGroq(questionList) {
@@ -878,9 +1294,22 @@ Questions: ${JSON.stringify(questionList)}`;
   }
 
   function downloadReport(data) {
-    // ── jsPDF is loaded via manifest content_scripts before content.js ──
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    // ── Safety check: jsPDF must be loaded via manifest before content.js ──
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      logToPopup('⚠ jsPDF not loaded — downloading plain text report instead.', 'warn');
+      downloadPlainReport(data);
+      return;
+    }
+
+    let doc;
+    try {
+      const { jsPDF } = window.jspdf;
+      doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    } catch (e) {
+      logToPopup('⚠ jsPDF init failed: ' + e.message + ' — falling back to text.', 'warn');
+      downloadPlainReport(data);
+      return;
+    }
 
     const PW  = 210;   // page width  (A4 mm)
     const PH  = 297;   // page height (A4 mm)
@@ -1258,8 +1687,63 @@ Questions: ${JSON.stringify(questionList)}`;
     // ── Footers ─────────────────────────────
     drawFooters(doc.getNumberOfPages());
 
-    // ── Save ────────────────────────────────
-    doc.save('voxpath-report-' + Date.now() + '.pdf');
+    // ── Export as base64 and download via background ──
+    // Content script blob downloads are blocked by Chrome CSP.
+    // background.js uses chrome.downloads which has no such restriction.
+    try {
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+
+      chrome.runtime.sendMessage(
+        { type: 'DOWNLOAD_PDF', dataUrl: url },
+        (response) => {
+          if (response && response.ok) {
+            logToPopup('✓ PDF downloaded.', 'score');
+          } else {
+            logToPopup('⚠ PDF download failed — trying text fallback.', 'warn');
+            downloadPlainReport(data);
+          }
+        }
+      );
+    } catch (e) {
+      logToPopup('⚠ PDF export failed: ' + e.message, 'warn');
+      downloadPlainReport(data);
+    }
+  }
+
+  // ── Plain text fallback if jsPDF fails ───────
+  function downloadPlainReport(data) {
+    const lines = [
+      'VOXPATH — INTERVIEW REPORT',
+      '===========================',
+      'Candidate : ' + (data.candidateName || 'Anonymous'),
+      'Date      : ' + new Date().toLocaleDateString('en-IN'),
+      'Questions : ' + data.answers.length,
+      '',
+    ];
+    data.answers.forEach((a, i) => {
+      lines.push('Q' + (i + 1) + ': ' + a.question);
+      lines.push('Answer  : ' + (a.transcript || 'N/A'));
+      lines.push('Score   : ' + (a.aiFeedback || 'N/A'));
+      lines.push('Fillers : ' + (a.fillerFeedback || 'None'));
+      lines.push('');
+    });
+    if (data.biasFlags && data.biasFlags.length > 0) {
+      lines.push('BIAS FLAGS:');
+      data.biasFlags.forEach(f => lines.push('  ⚠ ' + f));
+    }
+    lines.push('Generated by VoxPath v1.3');
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'voxpath-report-' + Date.now() + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    logToPopup('✓ Text report downloaded (PDF fallback).', 'score');
   }
 
   // ════════════════════════════════════════════
