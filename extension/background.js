@@ -1,22 +1,55 @@
 // ════════════════════════════════════════════
-//  VoxPath — Background Service Worker
-//  Handles: extension lifecycle, message relay
+//  VoxPath — Background Service Worker v1.3
+//  Handles TTS via chrome.tts (reliable in
+//  extensions unlike speechSynthesis)
 // ════════════════════════════════════════════
 
-// Relay messages between content script and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Forward log/status updates from content script to popup
-  if (message.type === 'LOG_UPDATE' || message.type === 'SESSION_STATUS') {
-    // Send to all extension views (popup if open)
-    chrome.runtime.sendMessage(message).catch(() => {
-      // Popup is closed — that's fine, just ignore
+
+  // ── TTS: speak a string ───────────────────
+  if (message.type === 'TTS_SPEAK') {
+    // Stop anything currently speaking first
+    chrome.tts.stop();
+
+    chrome.tts.speak(message.text, {
+      rate:   message.rate || 1.0,
+      volume: 1.0,
+      // 'en-US' is universally available; avoids silent failure
+      // from missing en-IN voice on some systems
+      lang:   'en-US',
+      onEvent: (event) => {
+        if (event.type === 'end' || event.type === 'error' || event.type === 'cancelled') {
+          // Send response back to content script so onDone callback fires
+          try { sendResponse({ done: true, event: event.type }); } catch (_) {}
+        }
+      }
     });
+
+    // Return true to keep message channel open for async sendResponse
+    return true;
   }
+
+  // ── TTS: stop immediately ─────────────────
+  if (message.type === 'TTS_STOP') {
+    chrome.tts.stop();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // ── Relay log/status from content → popup ─
+  if (message.type === 'LOG_UPDATE' || message.type === 'SESSION_STATUS') {
+    chrome.runtime.sendMessage(message).catch(() => {
+      // Popup closed — ignore
+    });
+    sendResponse({ ok: true });
+    return false;
+  }
+
   sendResponse({ ok: true });
-  return true;
+  return false;
 });
 
-// On extension install — set default settings
+// ── Default settings on install ──────────────
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.storage.local.set({
@@ -34,6 +67,5 @@ chrome.runtime.onInstalled.addListener((details) => {
       },
       voxpathVisited: false,
     });
-    console.log('VoxPath installed and defaults set.');
   }
 });
