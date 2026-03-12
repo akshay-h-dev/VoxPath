@@ -6,10 +6,12 @@ function Signup() {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setError('');
         try {
             const res = await registerUser(name, email, password);
             console.log('Signup Success:', res);
@@ -27,13 +29,26 @@ function Signup() {
             const errorMsg = err.response && err.response.data && err.response.data.error
                 ? err.response.data.error
                 : 'Signup failed. Please try again.';
-            alert(errorMsg);
+            setError(errorMsg);
         }
     };
 
     return (
         <div className="auth-page">
             <div className="auth-card">
+                <Link 
+                  to="/" 
+                  style={{ 
+                    display: 'inline-block',
+                    marginBottom: 'var(--space-lg)',
+                    color: 'var(--color-accent-primary)',
+                    textDecoration: 'none',
+                    fontSize: 'var(--font-size-sm)',
+                    fontWeight: 600
+                  }}
+                >
+                  ← Back to Home
+                </Link>
                 <div style={{ textAlign: 'center', marginBottom: 'var(--space-2xl)' }}>
                     <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>
                         <span style={{ color: 'var(--color-accent-primary)' }}>🛡️</span>
@@ -43,6 +58,7 @@ function Signup() {
                 </div>
 
                 <form onSubmit={handleSubmit}>
+                    {error && <div className="error-message" style={{ color: 'var(--color-error, #ff5f56)', background: 'rgba(255, 95, 86, 0.1)', padding: '10px', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)', textAlign: 'center', border: '1px solid var(--color-error, #ff5f56)' }}>{error}</div>}
                     <div className="form-group">
                         <label className="form-label" htmlFor="name">Full Name</label>
                         <input

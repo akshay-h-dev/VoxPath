@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -16,13 +17,14 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
-        {/* Keeping old routes accessible for the extension to use */}
-        <Route path="/dashboard" element={<><Navbar /><div className="main-content"><Dashboard /></div></>} />
-        <Route path="/summary/:sessionId" element={<><Navbar /><div className="main-content"><SessionSummary /></div></>} />
-        <Route path="/settings" element={<><Navbar /><div className="main-content"><Settings /></div></>} />
+        {/* Protected routes — require authentication */}
+        <Route path="/dashboard" element={<ProtectedRoute><Navbar /><div className="main-content"><Dashboard /></div></ProtectedRoute>} />
+        <Route path="/summary/:sessionId" element={<ProtectedRoute><Navbar /><div className="main-content"><SessionSummary /></div></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute><Navbar /><div className="main-content"><Settings /></div></ProtectedRoute>} />
       </Routes>
     </div>
   );
 }
 
 export default App;
+
