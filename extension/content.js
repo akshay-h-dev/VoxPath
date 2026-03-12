@@ -20,6 +20,12 @@
   let sessionPaused   = false;        // pause/resume
   let answerStartTime = null;         // for "time left"
   let currentAnswerLimit = 120;       // mirrors settings.answerTime
+  let lastAuthToken   = null;         // mirrors web app JWT for extension
+
+  const VOXPATH_ORIGINS = [
+    'http://localhost:5173',
+    'https://your-production-domain.com',
+  ];
 
   // ── Boot ─────────────────────────────────────
   loadSettings();
@@ -53,8 +59,48 @@
         }
       }
 
+      // Keep extension authentication in sync with the VoxPath web app
+      startAuthSync();
+
       initVoiceCommandListener();
     });
+  }
+
+  // ── Auth sync: mirror SPA JWT into extension storage ─────────────
+  function startAuthSync() {
+    syncAuthTokenOnce();
+    // Poll occasionally so token updates are picked up even without reloads
+    setInterval(syncAuthTokenOnce, 5000);
+  }
+
+  function isOnVoxPathOrigin() {
+    try {
+      const origin = window.location.origin;
+      return VOXPATH_ORIGINS.includes(origin);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function syncAuthTokenOnce() {
+    if (!isOnVoxPathOrigin()) return;
+
+    let token = null;
+    try {
+      token = window.localStorage ? window.localStorage.getItem('voxpath_token') : null;
+    } catch (_) {
+      token = null;
+    }
+
+    if (token && token !== lastAuthToken) {
+      lastAuthToken = token;
+      chrome.storage.local.set({ voxpathAuthToken: token });
+      chrome.runtime.sendMessage({ type: 'AUTH_STATUS', authenticated: true }).catch(() => {});
+    } else if (!token && lastAuthToken) {
+      lastAuthToken = null;
+      chrome.storage.local.remove('voxpathAuthToken');
+      chrome.runtime.sendMessage({ type: 'AUTH_STATUS', authenticated: false }).catch(() => {});
+    }
   }
 
   // ── Message listener from popup ───────────────

@@ -4,6 +4,10 @@
 //           status sync, log updates
 // ════════════════════════════════════════════
 
+// ── Constants ────────────────────────────────
+// Frontend home URL — update this when you deploy
+const FRONTEND_HOME = 'http://localhost:5173/';
+
 // ── Page Router ──────────────────────────────
 const pages = {
   landing:  document.getElementById('page-landing'),
@@ -26,8 +30,24 @@ function showToast(msg, duration = 2200) {
 
 // ── Landing Page Buttons ──────────────────────
 document.getElementById('btn-get-started').addEventListener('click', () => {
-  showPage('main');
-  syncStatusBadge();
+  // Open/redirect the current active tab to the VoxPath web app
+  try {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0]) {
+        chrome.tabs.update(tabs[0].id, { url: FRONTEND_HOME });
+      } else {
+        chrome.tabs.create({ url: FRONTEND_HOME });
+      }
+    });
+  } catch (_) {
+    // Fallback: do nothing special if chrome APIs are unavailable
+  }
+
+  // Mark as visited so subsequent opens can skip the landing page if desired
+  chrome.storage.local.set({ voxpathVisited: true });
+
+  // Close the popup after launching the web app
+  window.close();
 });
 
 document.getElementById('btn-setup-api').addEventListener('click', () => {
