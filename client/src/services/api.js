@@ -10,6 +10,15 @@ const api = axios.create({
   timeout: 30000, // 30s — Groq API calls can take a few seconds
 });
 
+// Automatically attach JWT token to every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('voxpath_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // ==================== Sessions ====================
 
 export const createSession = (data) =>

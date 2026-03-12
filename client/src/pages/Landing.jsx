@@ -53,36 +53,7 @@ function Landing() {
             ⏱️ 30-day money-back guarantee
           </p>
           
-          <div className="hero-image-container">
-            {/* Using a placeholder styled to look like an app showcase */}
-            <div style={{ 
-              width: '100%', 
-              height: '400px', 
-              background: 'var(--color-bg-card)',
-              borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--color-border)',
-              boxShadow: 'var(--shadow-lg)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'hidden',
-              position: 'relative'
-            }}>
-               <div style={{
-                 position: 'absolute', top: 0, left: 0, width: '100%', height: '40px', background: 'var(--color-bg-secondary)',
-                 borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', padding: '0 16px', gap: '8px'
-               }}>
-                 <div style={{width: '12px', height: '12px', borderRadius: '50%', background: '#ff5f56'}}></div>
-                 <div style={{width: '12px', height: '12px', borderRadius: '50%', background: '#ffbd2e'}}></div>
-                 <div style={{width: '12px', height: '12px', borderRadius: '50%', background: '#27c93f'}}></div>
-               </div>
-               <div style={{ textAlign: 'center', marginTop: '40px' }}>
-                 <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎙️</div>
-                 <h3 style={{ fontSize: '24px', fontWeight: 'bold' }}>VoxPath is Listening</h3>
-                 <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>"Say 'Begin Interview' to start"</p>
-               </div>
-            </div>
-          </div>
+          
         </div>
       </section>
 
