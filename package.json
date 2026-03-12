@@ -1,0 +1,16 @@
+{
+  "name": "voxpath",
+  "version": "1.0.0",
+  "description": "VoxPath — AI Voice Interview System (MERN Stack)",
+  "scripts": {
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["voxpath", "interview", "accessibility", "ai"],
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
