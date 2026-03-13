@@ -369,3 +369,20 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+.stat-box{
+  padding:16px;
+  border-radius:12px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+}
+
+.stat-label{
+  font-size:0.8rem;
+  color:var(--color-text-muted);
+  margin-bottom:4px;
+}
+
+.stat-value{
+  font-size:1.5rem;
+  font-weight:700;
+}

@@ -62,4 +62,12 @@ export const loginUser = (email, password) =>
 export const registerUser = (name, email, password) =>
   api.post('/auth/register', { name, email, password }).then((res) => res.data);
 
+// ==================== Per-user JSON (extension data) ====================
+
+export const saveUserExtensionData = (payload) =>
+  api.post('/user-data', { payload }).then((res) => res.data);
+
+export const getUserExtensionData = () =>
+  api.get('/user-data').then((res) => res.data);
+
 export default api;

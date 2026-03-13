@@ -7,6 +7,8 @@
 // ── Constants ────────────────────────────────
 // Frontend home URL — update this when you deploy
 const FRONTEND_HOME = 'http://localhost:5173/';
+// Backend API — try 5000 first (.env.example), then 5001 (server.js default)
+const BACKEND_PORTS = [5000, 5001];
 
 // ── Page Router ──────────────────────────────
 const pages = {
@@ -115,13 +117,59 @@ document.getElementById('btn-reset-settings').addEventListener('click', () => {
   });
 });
 
+// ── Extension login (sync reports without opening frontend) ─
+// Tries port 5000 then 5001 so it works with either .env PORT
+document.getElementById('btn-extension-login').addEventListener('click', () => {
+  const email = document.getElementById('input-account-email').value.trim();
+  const password = document.getElementById('input-account-password').value;
+  const statusEl = document.getElementById('extension-login-status');
+  if (!email || !password) {
+    statusEl.textContent = 'Enter email and password';
+    return;
+  }
+  statusEl.textContent = 'Logging in…';
+
+  function tryLogin(portIndex) {
+    if (portIndex >= BACKEND_PORTS.length) {
+      statusEl.textContent = 'Server not reachable. Try port 5000 or 5001.';
+      return;
+    }
+    const base = 'http://localhost:' + BACKEND_PORTS[portIndex] + '/api';
+    fetch(base + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success && data.data && data.data.token) {
+          chrome.storage.local.set(
+            { voxpathAuthToken: data.data.token, voxpathBackendApi: base },
+            () => {
+              statusEl.textContent = 'Logged in. Reports will sync to server.';
+              showToast('✓ Logged in');
+            }
+          );
+        } else {
+          statusEl.textContent = (data && data.error) ? data.error : 'Login failed';
+        }
+      })
+      .catch(() => tryLogin(portIndex + 1));
+  }
+  tryLogin(0);
+});
+
 // ── Populate form from storage ────────────────
 function loadSettingsIntoForm() {
-  chrome.storage.local.get('voxpathSettings', (result) => {
+  chrome.storage.local.get(['voxpathSettings', 'voxpathAuthToken'], (result) => {
     if (result.voxpathSettings) {
       applySettingsToForm(result.voxpathSettings);
     } else {
       loadDefaultSettings();
+    }
+    const statusEl = document.getElementById('extension-login-status');
+    if (statusEl) {
+      statusEl.textContent = result.voxpathAuthToken ? 'Logged in' : '';
     }
   });
 }

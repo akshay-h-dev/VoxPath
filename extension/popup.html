@@ -752,6 +752,24 @@
 
   <div class="settings-body">
 
+    <!-- VoxPath account (for syncing reports when frontend is not open) -->
+    <div class="settings-group">
+      <div class="group-header"><span>👤</span> VoxPath account</div>
+      <div class="setting-row">
+        <div class="setting-label">Email</div>
+        <div class="setting-desc">Log in so reports sync to the server (works even if the website is not open).</div>
+        <input type="email" class="setting-input" id="input-account-email" placeholder="you@example.com" style="padding-right:12px;" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-label">Password</div>
+        <input type="password" class="setting-input" id="input-account-password" placeholder="••••••••" style="padding-right:12px;" />
+      </div>
+      <div class="setting-row" style="flex-direction:row;align-items:center;gap:8px;">
+        <button type="button" class="btn-save" id="btn-extension-login" style="flex:none;">Log in</button>
+        <span id="extension-login-status" style="font-size:10px;color:var(--muted);"></span>
+      </div>
+    </div>
+
     <!-- API Config -->
     <div class="settings-group">
       <div class="group-header"><span>🔑</span> Groq API Configuration</div>

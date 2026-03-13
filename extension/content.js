@@ -289,10 +289,14 @@ Return ONLY valid JSON — no explanation:
 
     recognitionCmd.onresult = (event) => {
       if (isListeningAns) return;
-      const transcript = Array.from(event.results)
-        .slice(event.resultIndex)
-        .map(r => r[0].transcript.trim().toLowerCase())
-        .join(' ');
+    
+      const result = event.results[event.resultIndex];
+      if (!result || !result.isFinal) return;
+    
+      const transcript = result[0].transcript.trim().toLowerCase();
+    
+      logToPopup('Heard command: "' + transcript + '"', 'default');
+    
       handleSimpleCommand(transcript);
     };
 
@@ -1273,18 +1277,23 @@ Return ONLY valid JSON: {"relevance":4,"completeness":3,"clarity":4,"tip":"Your 
 
     logToPopup('📄 Building report data…', 'default');
 
+    const summary = {
+      candidateName: settings.candidateName || 'Anonymous',
+      questions,
+      answers:   sessionAnswers,
+      biasFlags,
+    };
+
+    // Try to persist this summary to the backend for the logged-in user
+    sendSummaryToBackend(summary);
+
     speak('Report generated. ' + sessionAnswers.length + ' answers evaluated.' +
       (biasFlags.length > 0 ? ' ' + biasFlags.length + ' biased questions flagged.' : ''));
 
     logToPopup('Report ready — ' + sessionAnswers.length + ' answers, ' + biasFlags.length + ' bias flag(s).', 'score');
 
     logToPopup('📄 Calling downloadReport…', 'default');
-    downloadReport({
-      candidateName: settings.candidateName || 'Anonymous',
-      questions,
-      answers:   sessionAnswers,
-      biasFlags,
-    });
+    downloadReport(summary);
   }
 
   // ── Called on post-submit page from storage data ──────────────
@@ -1302,15 +1311,20 @@ Return ONLY valid JSON: {"relevance":4,"completeness":3,"clarity":4,"tip":"Your 
       try { biasFlags = await auditBiasWithGroq(data.questions || []); } catch (_) {}
     }
 
-    speak('Interview report ready. ' + data.answers.length + ' answers evaluated.');
-    logToPopup('✅ Report ready. Downloading PDF…', 'score');
-
-    downloadReport({
+    const summary = {
       candidateName: data.candidateName || 'Anonymous',
       questions:     data.questions     || [],
       answers:       data.answers,
       biasFlags,
-    });
+    };
+
+    // Persist to backend for dashboard view
+    sendSummaryToBackend(summary);
+
+    speak('Interview report ready. ' + data.answers.length + ' answers evaluated.');
+    logToPopup('✅ Report ready. Downloading PDF…', 'score');
+
+    downloadReport(summary);
   }
 
   async function auditBiasWithGroq(questionList) {
@@ -1754,6 +1768,32 @@ Questions: ${JSON.stringify(questionList)}`;
     } catch (e) {
       logToPopup('⚠ PDF export failed: ' + e.message, 'warn');
       downloadPlainReport(data);
+    }
+  }
+
+  // ════════════════════════════════════════════
+  //  BACKEND SYNC — send JSON summary via background (avoids CORS)
+  //  Uses JWT from extension storage (synced from web app or popup login)
+  // ════════════════════════════════════════════
+  function sendSummaryToBackend(summary) {
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'SYNC_REPORT_TO_BACKEND', payload: summary },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            logToPopup('Backend sync error: ' + (chrome.runtime.lastError.message || 'unknown'), 'warn');
+            return;
+          }
+          if (response && response.ok) {
+            logToPopup('✓ Synced report to server (dashboard will show it).', 'score');
+          } else {
+            const msg = response && response.error ? response.error : 'Sync failed';
+            logToPopup('Backend: ' + msg + ' — Log in from extension Settings to sync.', 'warn');
+          }
+        }
+      );
+    } catch (e) {
+      logToPopup('Backend sync error: ' + e.message, 'warn');
     }
   }
 

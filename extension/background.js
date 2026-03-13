@@ -66,6 +66,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // ── Sync report JSON to backend (runs in extension context so CORS allows it) ─
+  if (message.type === 'SYNC_REPORT_TO_BACKEND') {
+    chrome.storage.local.get(['voxpathAuthToken', 'voxpathBackendApi'], (result) => {
+      const token = result.voxpathAuthToken;
+      if (!token) {
+        sendResponse({ ok: false, error: 'Not logged in' });
+        return;
+      }
+      const bases = result.voxpathBackendApi
+        ? [result.voxpathBackendApi]
+        : ['http://localhost:5000/api', 'http://localhost:5001/api'];
+
+      function trySync(portIndex) {
+        if (portIndex >= bases.length) {
+          sendResponse({ ok: false, error: 'Server not reachable' });
+          return;
+        }
+        const API_BASE = bases[portIndex];
+        fetch(`${API_BASE}/user-data`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token,
+          },
+          body: JSON.stringify({ payload: message.payload }),
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then((data) => {
+            sendResponse(data && data.success ? { ok: true } : { ok: false, error: 'Server error' });
+          })
+          .catch(() => trySync(portIndex + 1));
+      }
+      trySync(0);
+    });
+    return true;
+  }
+
   sendResponse({ ok: true });
 });
 

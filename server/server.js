@@ -12,14 +12,21 @@ const sessionRoutes = require('./routes/sessionRoutes');
 const scoreRoutes = require('./routes/scoreRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const authRoutes = require('./routes/authRoutes');
+const userDataRoutes = require('./routes/userDataRoutes');
 
 const app = express();
 
 // --------------- Middleware ---------------
+// Allow frontend + Chrome extension (extension works even when frontend tab is closed)
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? 'https://your-production-domain.com'
-    : 'http://localhost:5173',
+  origin: (origin, callback) => {
+    const allowed =
+      !origin ||
+      origin === 'http://localhost:5173' ||
+      (typeof origin === 'string' && origin.startsWith('chrome-extension://')) ||
+      (process.env.NODE_ENV === 'production' && origin === 'https://your-production-domain.com');
+    callback(null, allowed);
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -33,6 +40,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/score', scoreRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/user-data', userDataRoutes);
 
 // --------------- Error Handling ---------------
 app.use(errorHandler);

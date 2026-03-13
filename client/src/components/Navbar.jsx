@@ -41,8 +41,8 @@ function Navbar() {
 
           {token && (
             <>
-              <Link to="/dashboard" className="nav-link">Dashboard</Link>
-              <Link to="/settings" className="nav-link">Settings</Link>
+              <Link to="/dashboard" className="nav-link"></Link>
+              <Link to="/settings" className="nav-link"></Link>
 
               <button
                 onClick={handleLogout}
